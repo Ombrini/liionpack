@@ -81,6 +81,8 @@ class solver_utilsTest(unittest.TestCase):
 
     def test_sim_func(self):
         def bespoke_sim(parameter_values):
+            # Create a copy to prevent side effects
+            parameter_values = parameter_values.copy()
             model = pybamm.lithium_ion.SPM(
                 options={
                     "thermal": "lumped",
