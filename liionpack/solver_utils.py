@@ -1,7 +1,6 @@
 #
 # Solver utilities
 #
-
 import casadi
 import pybamm
 import numpy as np
@@ -53,7 +52,9 @@ def _serial_eval(model, solutions, inputs_dict, variables, t_eval):
     return casadi.horzcat(*var_eval)
 
 
-def _serial_step(model, solutions, inputs_dict, integrator, variables, t_eval, events):
+def _serial_step(
+    model, solutions, inputs_dict, integrator, variables, t_eval, events, sim=None
+):
     """
     Internal function to process the model for one timestep in a serial way.
 
@@ -102,22 +103,55 @@ def _serial_step(model, solutions, inputs_dict, integrator, variables, t_eval, e
         inputs = casadi.vertcat(*[x for x in temp.values()] + [t_min])
         ninputs = len(temp.values())
         # Call the integrator once, with the grid
-        casadi_sol = integrator(x0=x0, z0=z0, p=inputs)
-        xf = casadi.horzcat(x0, casadi_sol["xf"])
-        zf = casadi_sol["zf"]
-        if zf.is_empty():
-            y_sol = xf
-        else:
-            y_sol = casadi.vertcat(xf, casadi.horzcat(z0, zf))
-        xend = y_sol[:, -1]
-        sol.append(pybamm.Solution(t_eval, y_sol, model, inputs_dict[k]))
-        var_eval.append(variables(t_end, xend[:len_rhs], xend[len_rhs:], inputs[0:ninputs]))
-        if events is not None:
-            events_eval.append(
-                events(t_end, xend[:len_rhs], xend[len_rhs:], inputs[0:ninputs])
+        if integrator is None:
+            # this means that if the solver is not CasaDi we use the base PyBaMM step
+            if sim is None:
+                raise ValueError(
+                    "Simulation object must be provided if integrator is None"
+                )
+            
+            current_solution = solutions[k]
+            step_dt = t_eval[-1]
+            
+            sim.step(
+                dt=step_dt,
+                inputs=inputs_dict[k],
+                save=False,
+                starting_solution=current_solution,
             )
-        integration_time = timer.time()
-        sol[-1].integration_time = integration_time
+            step_sol = sim.solution
+            sol.append(step_sol)
+            
+            # Prepare args for variables evaluation
+            y_sol = step_sol.y
+            xend = y_sol[:len_rhs, -1]
+            if model.concatenated_algebraic.size > 0:
+                zend = y_sol[len_rhs:, -1]
+            else:
+                zend = casadi.DM()
+            
+            var_eval.append(variables(t_end, xend, zend, inputs[0:ninputs]))
+            if events is not None:
+                events_eval.append(
+                    events(t_end, xend, zend, inputs[0:ninputs])
+                )
+        else:
+            casadi_sol = integrator(x0=x0, z0=z0, p=inputs)
+            xf = casadi.horzcat(x0, casadi_sol["xf"])
+            zf = casadi_sol["zf"]
+            if zf.is_empty():
+                y_sol = xf
+            else:
+                y_sol = casadi.vertcat(xf, casadi.horzcat(z0, zf))
+            xend = y_sol[:, -1]
+            sol.append(pybamm.Solution(t_eval, y_sol, model, inputs_dict[k]))
+            var_eval.append(variables(t_end, xend[:len_rhs], xend[len_rhs:], inputs[0:ninputs]))
+            if events is not None:
+                events_eval.append(
+                    events(t_end, xend[:len_rhs], xend[len_rhs:], inputs[0:ninputs])
+                )
+            integration_time = timer.time()
+            sol[-1].integration_time = integration_time
 
     return sol, casadi.horzcat(*var_eval), casadi.horzcat(*events_eval)
 
@@ -164,7 +198,9 @@ def _mapped_eval(model, solutions, inputs_dict, variables, t_eval):
     return var_eval
 
 
-def _mapped_step(model, solutions, inputs_dict, integrator, variables, t_eval, events):
+def _mapped_step(
+    model, solutions, inputs_dict, integrator, variables, t_eval, events, sim=None
+):
     """
     Internal function to process the model for one timestep in a mapped way.
     Mapped versions of the integrator and variables functions should already
@@ -295,8 +331,10 @@ def _create_casadi_objects(inputs, sim, dt, Nspm, nproc, variable_names, mapped)
     ).last_state
     # evaluate initial condition
     model = sim.built_model
+    len_rhs_sens = getattr(model, "len_rhs_sens", 0)
+    len_alg_sens = getattr(model, "len_alg_sens", 0)
     y0_total_size = (
-        model.len_rhs + model.len_rhs_sens + model.len_alg + model.len_alg_sens
+        model.len_rhs + len_rhs_sens + model.len_alg + len_alg_sens
     )
     y_zero = np.zeros((y0_total_size, 1))
     for inpt in inputs:
@@ -315,9 +353,13 @@ def _create_casadi_objects(inputs, sim, dt, Nspm, nproc, variable_names, mapped)
     inp_and_ext = inputs
 
     # Code to create mapped integrator
-    integrator = solver.create_integrator(
-        sim.built_model, inputs=inp_and_ext, t_eval=t_eval
-    )
+    try: # try to see if we can create the integrator (using CasadiSolver)
+        integrator = solver.create_integrator(
+            sim.built_model, inputs=inp_and_ext, t_eval=t_eval
+        )
+    except AttributeError:
+        # Solver (e.g. IDAKLU) does not support create_integrator
+        integrator = None
     if mapped:
         integrator = integrator.map(Nspm, "thread", nproc)
     # Get the input parameter order

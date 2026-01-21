@@ -5,7 +5,7 @@
 import numpy as np
 import pathlib
 from scipy.interpolate import interp1d
-
+import pybamm
 
 def interp_current(df):
     """
@@ -97,6 +97,34 @@ def add_events_to_model(model):
             The PyBaMM model to solve with events added as variables.
 
     """
+    new_events = []
+    if "Current [A]" in model.variables:
+        current = model.variables["Current [A]"]
+    else:
+        current = None
+
+    for event in model.events:
+        if current is not None and "Minimum voltage" in event.name:
+            tol = 1e-4
+            target = 5e-4 
+            switch = pybamm.sigmoid(current, target, tol)
+            cond_expr = event.expression * switch + 1.0 * (1 - switch)
+            new_event = pybamm.Event(event.name, cond_expr, event.event_type)
+            new_events.append(new_event)
+        elif "switch" in event.name:
+            continue
+        elif current is not None and "Maximum voltage" in event.name:
+            tol = 1e-4
+            target = 5e-4
+            switch = pybamm.sigmoid(-current, target, tol)
+            cond_expr = event.expression * switch + 1.0 * (1 - switch)
+            new_event = pybamm.Event(event.name, cond_expr, event.event_type)
+            new_events.append(new_event)
+        else:
+            new_events.append(event)
+    
+    model.events = new_events
+
     for event in model.events:
         model.variables.update({"Event: " + event.name: event.expression})
     return model

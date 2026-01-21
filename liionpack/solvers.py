@@ -43,7 +43,9 @@ class GenericActor:
                 or (isinstance(initial_soc, list) and len(initial_soc) == 1)
                 or (isinstance(initial_soc, np.ndarray) and len(initial_soc) == 1)
             ):
-                _, _ = lp.update_init_conc(parameter_values, initial_soc, update=True)
+                _, _ = lp.update_init_conc(
+                    parameter_values, initial_soc, update=True, inputs=inputs[0]
+                )
             else:
                 lp.logger.warning(
                     "Using a list or an array of initial_soc "
@@ -85,6 +87,7 @@ class GenericActor:
             self.variables_fn,
             self.t_eval,
             self.events_fn,
+            sim=self.simulation,
         )
         return self.check_events()
 
@@ -128,8 +131,15 @@ class RayActor(GenericActor):
 class GenericManager:
     def __init__(
         self,
+        manager_name=None,
+        nproc=None,
     ):
-        pass
+        self.manager_name = manager_name
+        self.nproc = nproc
+        self.actor_set = []
+
+    def get_actor_initial_step_output(self):
+        raise NotImplementedError("Subclasses must implement get_actor_initial_step_output")
 
     def solve(
         self,
@@ -344,13 +354,21 @@ class GenericManager:
             self.shm_i_app[self.global_step + 1, :] = I_app
             self.node_voltages[self.global_step, :] = V_node
             self.inputs_dict = lp.build_inputs_dict(I_app, self.inputs, updated_inputs)
-        # 06 Check if voltage limits are reached and terminate
-        if np.any(temp_v < self.v_cut_lower):
-            lp.logger.warning("Low voltage limit reached")
-            vlims_ok = False
-        if np.any(temp_v > self.v_cut_higher):
-            lp.logger.warning("High voltage limit reached")
-            vlims_ok = False
+        if np.any(temp_v <= self.v_cut_lower):
+            # Only terminate if we are discharging (I > 0)
+            # This allows starting a Rest or Charge step from the cutoff voltage
+            current = self.shm_i_app[self.global_step, :]
+            tol = 1e-4
+            if np.any((temp_v <= self.v_cut_lower) & (current > tol)):
+                lp.logger.warning("Low voltage limit reached")
+                vlims_ok = False
+        if np.any(temp_v >= self.v_cut_higher):
+            # Only terminate if we are charging (I < 0)
+            current = self.shm_i_app[self.global_step, :]
+            tol = 1e-4
+            if np.any((temp_v >= self.v_cut_higher) & (current < -tol)):
+                lp.logger.warning("High voltage limit reached")
+                vlims_ok = False
         v_thresh = temp_v - termination
         if np.any(v_thresh < 0) and np.any(v_thresh > 0):
             # some have crossed the stopping condition
