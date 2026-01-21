@@ -110,24 +110,22 @@ def LFP_ocp_phase_field(sto):
     return 3.43 - 0.0257*(np.log(sto/(1-sto)) + 3.8*(1-2*sto))
 
 def LFP_ocp_lithi(sto):
-    c1 = -56.0564 * sto
+    c1 = -40.7845 * sto
     c2 = -500.0000 * (1 - sto)
-    k = 3.40723 + (-0.0100 * sto) + (0.1083 * np.exp(c1)) + (-0.0787 * np.exp(c2))
+    k = 3.4075 + (-0.0150 * sto) + (0.0662 * np.exp(c1)) + (-0.0718 * np.exp(c2))
+    return k
+
+def LFP_ocp_delithi(sto):
+    c1 = -500.0000 * sto
+    c2 = -40.7845 * (1 - sto)
+    k = 3.4665 + (-0.0150 * sto) + (0.0718 * np.exp(c1)) + (-0.0662 * np.exp(c2))
     return k
 
 def LFP_ocp_avg(sto):
     c1 = -150 * sto
     c2 = -150 * (1 - sto)
-    k = (3.4075 + 3.4623)/2 - 0.01 * sto + 0.065 * np.exp(c1) - 0.065 * np.exp(c2)
+    k = (3.4075 + 3.4623)/2 - 0.015 * sto + (0.0718 + 0.0662)/2 * np.exp(c1) - (0.0718 + 0.0662)/2 * np.exp(c2)
     return k
-
-def LFP_ocp_delithi(sto):
-
-    c1 = -500.0000 * sto
-    c2 = -56.0564 * (1 - sto)
-    k = 3.4623 + (-0.0100 * sto) + (0.0787 * np.exp(c1)) + (-0.1083 * np.exp(c2))
-    return k
-
 
 if __name__ == "__main__":
 
