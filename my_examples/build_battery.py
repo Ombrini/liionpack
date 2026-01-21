@@ -12,7 +12,9 @@ from ocps import *
 
 base_model = pybamm.lithium_ion.DFN(options = {"particle": ("quadratic profile","uniform profile"),
                                                 #  "thermal": "lumped",
-                                                "open-circuit potential": ("current sigmoid", "current sigmoid"),
+                                                # "open-circuit potential": ("current sigmoid", "current sigmoid"),
+                                                "open-circuit potential": ("one-state hysteresis",
+                                                                            "one-state hysteresis"),
                                                  },
                                     name="Sigmoid OCPs")
 
@@ -22,8 +24,8 @@ advanced_model = pybamm.lithium_ion.DFN(options = {"particle": ("quadratic profi
                                         name="Phase field OCPs")
 
 discret_points = {"x_n": 20, 
-           "x_s": 3, 
-           "x_p": 100, 
+           "x_s": 5, 
+           "x_p": 80, 
            "r_p": 10, 
            "r_n": 10,
            }
@@ -172,6 +174,7 @@ param_battery.update({
 })
 
 param_base = param_battery.copy()
+decay = 1
 param_base.update({
     "Negative electrode OCP [V]": graphite_ocp_avg,
     "Negative electrode lithiation OCP [V]": graphite_ocp_lithi,
@@ -180,6 +183,14 @@ param_base.update({
     "Positive electrode OCP [V]": LFP_ocp_avg,
     "Positive electrode lithiation OCP [V]": LFP_ocp_lithi,
     "Positive electrode delithiation OCP [V]": LFP_ocp_delithi,
+
+    "Negative particle lithiation hysteresis decay rate": decay,
+    "Positive particle lithiation hysteresis decay rate": decay,
+    "Negative particle delithiation hysteresis decay rate": decay,
+    "Positive particle delithiation hysteresis decay rate": decay,
+
+    "Initial hysteresis state in negative electrode": 0,
+    "Initial hysteresis state in positive electrode": 0,
 }, check_already_exists=False)
 
 param_adv = param_battery.copy()
@@ -191,30 +202,16 @@ param_adv.update({
 
 # if this is main script, run a test simulation
 if __name__ == "__main__":
-    rate = 0.5
-    initial_state_of_charge = 0.001
+    rate = 1
+    initial_state_of_charge = 0.5
     current = rate * param_battery["Nominal cell capacity [A.h]"] # 1C in A
 
     experiment = pybamm.Experiment(
         [   
-            # f"Discharge at {current} A until {param_battery["Lower voltage cut-off [V]"]} V",
-            "Rest for 10 minutes",
-            f"Discharge at {2*current} A for {0.5*10/rate} minutes",
-            f"Charge at {2*current} A for {0.5*10/rate} minutes",
-            "Rest for 200 minutes",
-            f"Discharge at {current} A for {30/rate} minutes",
-            "Rest for 50 minutes",
-            f"Charge at {current} A for {20/rate} minutes",
-            "Rest for 50 minutes",
-            f"Discharge at {current} A for {40/rate} minutes",
-            # f"Charge at {current} A for {1/rate} minutes",
-            # "Rest for 60 minutes",
-            # "Rest for 60 minutes",
-            # f"Charge at {current} A for {30/rate} minutes",
-            # "Rest for 50 minutes",
-            # f"Discharge at {current} A until {param_battery['Lower voltage cut-off [V]']} V",
-            # "Rest for 50 minutes",
-            # f"Charge at {current} A until {param_battery["Upper voltage cut-off [V]"]} V",
+            "Charge at 0.1 C for 600 minutes or until 3.5 V",
+            "Rest for 100 minutes",
+            f"Discharge at {rate} C for {60*0.5/rate} minutes",
+            "Rest for 100 minutes",
         ],
     )
 
@@ -222,7 +219,8 @@ if __name__ == "__main__":
     sim_adv = pybamm.Simulation(
         model=advanced_model,
         parameter_values=param_adv,
-        solver=pybamm.CasadiSolver(mode="safe"),
+        # solver=pybamm.CasadiSolver(mode="safe"),
+        solver = pybamm.IDAKLUSolver(),
         var_pts=discret_points,
         experiment=experiment,
     )
@@ -235,7 +233,8 @@ if __name__ == "__main__":
     sim_base = pybamm.Simulation(
         model=base_model,
         parameter_values=param_base,
-        solver=pybamm.CasadiSolver(mode="safe"),
+        # solver=pybamm.CasadiSolver(mode="safe"),
+        solver = pybamm.IDAKLUSolver(),
         var_pts=discret_points,
         experiment=experiment,
     )
@@ -255,6 +254,7 @@ if __name__ == "__main__":
 
     pybamm.dynamic_plot(
         [sol_adv, sol_base],
+        # sol_base,
         output_variables=output_variables,
     )
 
@@ -282,7 +282,8 @@ if __name__ == "__main__":
         sim_adv = pybamm.Simulation(
             model=advanced_model,
             parameter_values=param_adv,
-            solver=pybamm.CasadiSolver(mode="safe"),
+            # solver=pybamm.CasadiSolver(mode="safe"),
+            solver = pybamm.IDAKLUSolver(1e-8,1e-8),
             var_pts=discret_points,
             experiment=experiment,
         )
@@ -295,12 +296,14 @@ if __name__ == "__main__":
             sol["Discharge capacity [A.h]"].entries/param_battery["Nominal cell capacity [A.h]"],
             sol["Voltage [V]"].entries,
             label=f"{rate}C (adv)",
+            color = 'C'+str(int(rate*10)),
         )
 
         sim_base = pybamm.Simulation(
             model=base_model,
             parameter_values=param_base,
-            solver=pybamm.CasadiSolver(mode="safe"),
+            # solver=pybamm.CasadiSolver(mode="safe"),
+            solver = pybamm.IDAKLUSolver(1e-8,1e-8),
             var_pts=discret_points,
             experiment=experiment,
         )
@@ -313,6 +316,7 @@ if __name__ == "__main__":
             sol["Voltage [V]"].entries,
             "--",
             label=f"{rate}C (base)",
+            color = 'C'+str(int(rate*10)),
         )
 
     plt.xlabel("Depth of Discharge")
