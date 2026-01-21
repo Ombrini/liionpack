@@ -1,8 +1,7 @@
 import liionpack as lp
 import pybamm
-import numpy as np
 import matplotlib.pyplot as plt
-from build_battery import base_model, advanced_model, discret_points, param_base, param_adv 
+from my_examples.run_cell import base_model, advanced_model, discret_points, param_base, param_adv 
 
 # print("pybamm version: ", pybamm.__version__) # must be 24.9
 
