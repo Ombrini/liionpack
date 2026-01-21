@@ -14,7 +14,8 @@ def sim_base(parameter_values=None):
     sim = pybamm.Simulation(
         model=base_model,
         parameter_values=parameter_values,
-        solver=pybamm.CasadiSolver(mode="safe"),
+        # solver=pybamm.CasadiSolver(mode="safe"),
+        solver = pybamm.IDAKLUSolver(atol=1e-4, rtol=1e-4),
         var_pts=discret_points,
     )
     return sim
@@ -27,15 +28,16 @@ def sim_advanced(parameter_values=None):
     sim = pybamm.Simulation(
         model=advanced_model,
         parameter_values=parameter_values,
-        solver=pybamm.CasadiSolver(mode="safe"),
+        # solver=pybamm.CasadiSolver(mode="safe"),
+        solver=pybamm.IDAKLUSolver(atol=1e-4, rtol=1e-4),
         var_pts=discret_points,
     )
     return sim
 
 I_mag = 160.0
-OCV_init = 3.5  # used for initial guess
+OCV_init = 3.2  # used for initial guess
 Ri_init = 6e-4  # used for initial guess
-R_busbar = 5e-5
+R_busbar = 10e-5
 R_connection = 1e-4
 Np = 4
 Ns = 1
@@ -59,11 +61,11 @@ time = 60*(initial_soc - final_soc) / rate  # in minutes
 
 experiment = pybamm.Experiment(
     [
-        # f"Discharge at {current} A for {time} minutes",
-        f"Discharge at 1000 W for {time} minutes",
+        f"Discharge at {current} A for {time} minutes",
+        # f"Discharge at 1000 W for {time} minutes",
         # "Rest for 15 minutes",
         # "Discharge at 5 A for 30 minutes",
-        "Rest for 100 minutes",
+        "Rest for 600 minutes",
     ],
     period= f"{time/50} minutes",
 )
@@ -108,17 +110,22 @@ def get_soc(output):
     return 100*(1 - (ext_of_lith - sto_at_100) / (sto_at_0 - sto_at_100))
 
 
-fig, ax = plt.subplots()
+fig, ax = plt.subplots(2,1, figsize=(8, 6), sharex=True)
 for out, style, lab in zip(outputs, styles, labels):
     time = out["Time [s]"]
     soc = get_soc(out)
+    volt = out["Terminal voltage [V]"]
     for cell_number in range(Nbatt):
-        soc_cell = soc[:, cell_number]
-        ax.plot(time/60, soc_cell, style, label=f"{lab} - Cell {cell_number+1}", color=f"C{cell_number}")
+        ax[0].plot(time/60, soc[:, cell_number], style, label=f"{lab} - Cell {cell_number+1}", color=f"C{cell_number}")
+        ax[1].plot(time/60, volt[:, cell_number], style, label=f"{lab} - Cell {cell_number+1}", color=f"C{cell_number}")
 
-ax.set_xlabel("Time (min)", fontsize=14)
-ax.set_ylabel("State of Charge (%)", fontsize=14)
-ax.legend(frameon=False)
+ax[0].set_xlabel("Time (min)", fontsize=14)
+ax[0].set_ylabel("State of Charge (%)", fontsize=14)
+# ax[0].legend(frameon=False)
+
+ax[1].set_xlabel("Time (min)", fontsize=14)
+ax[1].set_ylabel("Voltage (V)", fontsize=14)
+ax[1].legend(frameon=False)
 
 # lp.plot_cells(output_adv, color="light")
 # lp.plot_cells(output_base, color="dark")
