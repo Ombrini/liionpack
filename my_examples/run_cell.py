@@ -12,26 +12,37 @@ base_model = pybamm.lithium_ion.DFN(options = {"particle": ("quadratic profile",
                                                 #  "thermal": "lumped",
                                                 "open-circuit potential": ("one-state hysteresis",
                                                                             "one-state hysteresis"),
+                                                # "open-circuit potential": ("current sigmoid",
+                                                #                            "current sigmoid"),
+                                                "particle size": ("single","distribution"),                         
                                                  },
                                     name="Sigmoid OCPs")
 
 advanced_model = pybamm.lithium_ion.DFN(options = {"particle": ("quadratic profile","uniform profile"),
                                                   # "thermal": "lumped",
+                                                  "particle size": ("single","distribution"),
                                                   },
                                         name="Phase field OCPs")
 
 # if this is main script, run a test simulation
 if __name__ == "__main__":
-    rate = 1
-    initial_state_of_charge = 0.5
+    rate = 2
+    initial_state_of_charge = 1
     current = rate * param_battery["Nominal cell capacity [A.h]"] # 1C in A
 
     experiment = pybamm.Experiment(
         [   
-            "Charge at 0.1 C for 600 minutes or until 3.5 V",
-            "Rest for 100 minutes",
-            f"Discharge at {rate} C for {60*0.5/rate} minutes",
-            "Rest for 100 minutes",
+            # "Discharge at 0.1 C for 600 minutes or until 2.8 V",
+            # "Rest for 180 minutes",
+            # f"Charge at {current} A for {60*0.5/rate} minutes",
+            # "Rest for 180 minutes",
+            # f"Discharge at {current} A until 2.6 V",
+
+            "Charge at 0.1 C for 600 minutes or until 3.6 V",
+            "Rest for 180 minutes",
+            *([f"Discharge at {current} A for {60*0.2/rate} minutes",
+            "Rest for 180 minutes"]*5)
+            
         ],
     )
 
@@ -87,15 +98,15 @@ if __name__ == "__main__":
     # Rate tests, to be expanded with temperature variations
     print("Running rate tests...")
     plt.figure()
-    for rate in [0.1, 0.5, 1]:
+    for rate in [0.01, 1, 2]:
         print(f"Running rate test at: {rate}C")
         current = rate * param_battery["Nominal cell capacity [A.h]"] # 1C in A
 
         experiment = pybamm.Experiment(
             [   
-                f"Discharge at {current} A until {param_battery['Lower voltage cut-off [V]']} V",
+                f"Discharge at {current} A for 6000 minutes or until {param_battery['Lower voltage cut-off [V]']} V",
                 f"Hold at {param_battery['Lower voltage cut-off [V]']} V until C/20",
-                f"Charge at {current} A until {param_battery['Upper voltage cut-off [V]']} V",
+                f"Charge at {current} A for 6000 minutes or until {param_battery['Upper voltage cut-off [V]']} V",
             ],
         )
 
@@ -113,7 +124,7 @@ if __name__ == "__main__":
         print(f"Rate: {rate}C, Simulation time: ", time.time() - current_time, " seconds")
 
         plt.plot(
-            sol["Discharge capacity [A.h]"].entries/param_battery["Nominal cell capacity [A.h]"],
+            100 - 100*sol["Discharge capacity [A.h]"].entries/param_battery["Nominal cell capacity [A.h]"],
             sol["Voltage [V]"].entries,
             label=f"{rate}C (adv)",
             color = 'C'+str(int(rate*10)),
@@ -132,14 +143,14 @@ if __name__ == "__main__":
         sol = sim_base.solve()
         print(f"Rate: {rate}C, Simulation time: ", time.time() - current_time, " seconds")
         plt.plot(
-            sol["Discharge capacity [A.h]"].entries/param_battery["Nominal cell capacity [A.h]"],
+            100 - 100*sol["Discharge capacity [A.h]"].entries/param_battery["Nominal cell capacity [A.h]"],
             sol["Voltage [V]"].entries,
             "--",
             label=f"{rate}C (base)",
             color = 'C'+str(int(rate*10)),
         )
 
-    plt.xlabel("Depth of Discharge")
+    plt.xlabel("State of Charge (%)")
     plt.ylabel("Voltage [V]")
     plt.legend()
 

@@ -17,7 +17,7 @@ def parametric_ocp(sto, p):
 def optimize_delithiation():
     
     # --- Settings ---
-    FIXED_SLOPE = -0.015
+    FIXED_SLOPE = -0.01
     
     # --- Constraint Targets ---
     sto_low = 0.001
@@ -101,6 +101,7 @@ print("FINAL PARAMETRIC FORMULA (Lithiation)")
 print(f"c1 = {p_delithi[5]:.4f} * sto")
 print(f"c2 = {p_delithi[3]:.4f} * (1 - sto)")
 print(f"k = {p_delithi[0]-0.06:.4f} + ({p_delithi[1]:.4f} * sto) + ({-p_delithi[4]:.4f} * np.exp(c1)) + (-{p_delithi[2]:.4f} * np.exp(c2))")
+
 
 # 6. Visualization
 sto_range = np.linspace(0.001, 0.999, 500)

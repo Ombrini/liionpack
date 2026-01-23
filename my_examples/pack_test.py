@@ -14,7 +14,7 @@ def sim_base(parameter_values=None):
         model=base_model,
         parameter_values=parameter_values,
         # solver=pybamm.CasadiSolver(mode="safe"),
-        solver = pybamm.IDAKLUSolver(atol=1e-4, rtol=1e-4),
+        solver = pybamm.IDAKLUSolver(atol=1e-6, rtol=1e-6),
         var_pts=discret_points,
     )
     return sim
@@ -28,7 +28,7 @@ def sim_advanced(parameter_values=None):
         model=advanced_model,
         parameter_values=parameter_values,
         # solver=pybamm.CasadiSolver(mode="safe"),
-        solver=pybamm.IDAKLUSolver(atol=1e-4, rtol=1e-4),
+        solver=pybamm.IDAKLUSolver(atol=1e-6, rtol=1e-6),
         var_pts=discret_points,
     )
     return sim
@@ -36,7 +36,7 @@ def sim_advanced(parameter_values=None):
 I_mag = 160.0
 OCV_init = 3.2  # used for initial guess
 Ri_init = 6e-4  # used for initial guess
-R_busbar = 10e-5
+R_busbar = 5e-5
 R_connection = 1e-4
 Np = 4
 Ns = 1
@@ -48,43 +48,66 @@ netlist = lp.setup_circuit(
     Rc=R_connection, 
     Ri=Ri_init, 
     V=OCV_init, 
-    I=I_mag
+    I=I_mag,
+    terminals="left",
 )
 
-oneC = param_base["Nominal cell capacity [A.h]"]
+oneC = param_base["Nominal cell capacity [A.h]"] * Nbatt
 rate = 1
-current = rate * oneC * Nbatt # 1C in A
-initial_soc = 0.99
-final_soc = 0.55
-time = 60*(initial_soc - final_soc) / rate  # in minutes
+current = rate * oneC  # 1C in A
+initial_soc = 0.1
+final_soc = 0.50
+time = abs(60*(initial_soc - final_soc) / rate ) # in minutes
+avg_volt = 3.3
+power = oneC * avg_volt * rate # in W
+print(f"Simulating discharge at {power:.1f} W for {time:.1f} minutes")
 
 experiment = pybamm.Experiment(
-    [
-        f"Discharge at {current} A for {time} minutes",
-        # f"Discharge at 1000 W for {time} minutes",
+    [   
+        # f"Charge at {0.5*current} A for 100 minutes",
+        # "Rest for 120 minutes",
+        # f"Discharge at {current} A for {0.5*60/rate} minutes",
+        # # f"Discharge at 1000 W for {time} minutes",
         # "Rest for 15 minutes",
-        # "Discharge at 5 A for 30 minutes",
-        "Rest for 600 minutes",
+        # # "Discharge at 5 A for 30 minutes",
+        
+        # f"Charge at {current} A for 500 minutes",
+
+        # f"Charge at {oneC*0.1} A for 500 minutes",
+        # "Rest for 180 minutes",
+        # *([f"Discharge at {current} A for {60*0.2/rate} minutes",
+        # "Rest for 60 minutes"]*4),
+        # f"Discharge at {current} A for 5 minutes",
+
+        f"Charge at {oneC*0.1} A for 500 minutes",
+        "Rest for 180 minutes",
+        *([f"Discharge at {power} W for {60*0.2/rate} minutes",
+        "Rest for 60 minutes"]*3),
     ],
-    period= f"{time/50} minutes",
+    period= f"2 minutes",
 )
 
 output_variables = [
     # "X-averaged negative particle surface concentration",
     # "X-averaged positive particle surface concentration",
     # "X-averaged negative electrode extent of lithiation",
-    "X-averaged positive electrode extent of lithiation"
+    "X-averaged positive electrode extent of lithiation",
+    # "X-averaged positive electrode hysteresis state"
 ]
 
+param_base_list = [param_base]*Nbatt
+
+print("Running simulation base")
 output_base = lp.solve(
     sim_func = sim_base,
     netlist=netlist,
-    parameter_values=param_base,
+    parameter_values=param_base_list,
     experiment=experiment,
     output_variables=output_variables,
     initial_soc=initial_soc,
 )
 
+print("Running simulation advanced")
 output_adv = lp.solve(
     sim_func = sim_advanced,
     netlist=netlist,
@@ -99,7 +122,7 @@ styles = ["--", "-"]
 labels = ["Base model", "Adv. model"]
 
 print("Output keys:")
-print(output_adv.keys())
+# print(output_adv.keys())
 
 # Convenient function to compute SOC from extent of lithiation
 def get_soc(output):
@@ -113,7 +136,9 @@ fig, ax = plt.subplots(2,1, figsize=(8, 6), sharex=True)
 for out, style, lab in zip(outputs, styles, labels):
     time = out["Time [s]"]
     soc = get_soc(out)
-    volt = out["Terminal voltage [V]"]
+    # volt = out["Terminal voltage [V]"]
+    volt = out["Surface open-circuit voltage [V]"]
+    # soc = out["X-averaged positive electrode hysteresis state"]
     for cell_number in range(Nbatt):
         ax[0].plot(time/60, soc[:, cell_number], style, label=f"{lab} - Cell {cell_number+1}", color=f"C{cell_number}")
         ax[1].plot(time/60, volt[:, cell_number], style, label=f"{lab} - Cell {cell_number+1}", color=f"C{cell_number}")

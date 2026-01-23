@@ -157,7 +157,72 @@ class GenericManager:
         self.netlist = netlist
         self.sim_func = sim_func
         self.node_termination_func = node_termination_func
-        self.parameter_values = parameter_values
+
+        # Handle parameter_values being a list for cell variability
+        if isinstance(parameter_values, list):
+            # Check length
+            if len(parameter_values) != np.sum(netlist["desc"].str.find("V") > -1):
+                # Note: self.Nspm is not calculated yet, but we can calculate it or check later.
+                # Actually, Nspm is calculated right below using V_map. 
+                # Let's defer the check slightly or do it now.
+                # Re-calculating Nsmp here for check
+                v_map_check = netlist["desc"].str.find("V") > -1
+                nspm_check = np.sum(v_map_check)
+                if len(parameter_values) != nspm_check:
+                     raise ValueError(
+                        f"Length of parameter_values list ({len(parameter_values)}) "
+                        f"must match number of cells in netlist ({nspm_check})."
+                    )
+
+            # Detect varying parameters
+            base_params = parameter_values[0].copy()
+            varying_params = {}
+            # We need to iterate over all keys of the first parameter set
+            # and check if they are the same in all other sets.
+            # This could be expensive if many parameters.
+            # Optimization: Only check keys that exist in all (they should match).
+            
+            # Get all keys from the first param set
+            param_keys = base_params.keys()
+            
+            # Helper to check equality safely (handling numpy arrays etc)
+            def is_different(val1, val2):
+                if isinstance(val1, np.ndarray) or isinstance(val2, np.ndarray):
+                    return not np.array_equal(val1, val2)
+                return val1 != val2
+
+            for key in param_keys:
+                # We want to find keys where at least one param set has a different value
+                # We assume all param sets have the same keys
+                first_val = base_params[key]
+                is_varying = False
+                values_list = []
+                values_list.append(first_val)
+                
+                for i in range(1, len(parameter_values)):
+                    val = parameter_values[i][key]
+                    if not is_varying and is_different(first_val, val):
+                        is_varying = True
+                    values_list.append(val)
+                
+                if is_varying:
+                    varying_params[key] = values_list
+                    base_params[key] = "[input]"
+            
+            self.parameter_values = base_params
+            # Add varying params to inputs
+            # inputs is a dict of {name: array_of_values}
+            if inputs is None:
+                inputs = {}
+            
+            for key, val_list in varying_params.items():
+                inputs[key] = np.array(val_list)
+                
+            lp.logger.notice(f"Detected {len(varying_params)} varying parameters: {list(varying_params.keys())}")
+
+        else:
+            self.parameter_values = parameter_values
+
         self.check_current_function()
         # Get netlist indices for resistors, voltage sources, current sources
         self.Ri_map = netlist["desc"].str.find("Ri") > -1
@@ -202,7 +267,7 @@ class GenericManager:
         # 1D model
         self.variable_names = [
             "Terminal voltage [V]",
-            "Surface open-circuit voltage [V]",
+            "Battery open-circuit voltage [V]",
         ]
         if output_variables is not None:
             for out in output_variables:
@@ -229,8 +294,8 @@ class GenericManager:
         self.P_terminal = np.zeros(self.Nsteps, dtype=np.float32)
         self.record_times = np.zeros(self.Nsteps, dtype=np.float32)
 
-        self.v_cut_lower = parameter_values["Lower voltage cut-off [V]"]
-        self.v_cut_higher = parameter_values["Upper voltage cut-off [V]"]
+        self.v_cut_lower = self.parameter_values["Lower voltage cut-off [V]"]
+        self.v_cut_higher = self.parameter_values["Upper voltage cut-off [V]"]
 
         # Handle the inputs
         self.inputs = inputs

@@ -1,17 +1,28 @@
 import pybamm
 import numpy as np
-from my_examples.ocps import *
+import time
+from my_examples.base_battery_param import *
 
-def lognormal(x, x_av, sd):
-    mu_ln = pybamm.log(x_av**2 / pybamm.sqrt(x_av**2 + sd**2))
-    sigma_ln = pybamm.sqrt(pybamm.log(1 + sd**2 / x_av**2))
+# Script to build the model akin to the battery of Stock et al 2023.
+# The thermal model slows down everything by 5 times. 
+# Maybe better to think about an easier model like: take (V - OCV)*I as heat source at each timestep and impose the temperature in the cell. 
 
-    out = (
-        pybamm.exp(-((pybamm.log(x) - mu_ln) ** 2) / (2 * sigma_ln**2))
-        / pybamm.sqrt(2 * np.pi * sigma_ln**2)
-        / x
-    )
-    return out
+# Also, at the moment the advance model has differnt OCVs, better to change the one of prada to get the same at 0.1C
+
+base_model = pybamm.lithium_ion.DFN(options = {"particle": ("quadratic profile","uniform profile"),
+                                                #  "thermal": "lumped",
+                                                # "open-circuit potential": ("current sigmoid", "current sigmoid"),
+                                                "open-circuit potential": ("one-state hysteresis",
+                                                                            "one-state hysteresis"),
+                                                 },
+                                    name="Sigmoid OCPs")
+
+discret_points = {"x_n": 20, 
+           "x_s": 5, 
+           "x_p": 80, 
+           "r_p": 10, 
+           "r_n": 10,
+           }
 
 def electrolyte_diffusivity_Nyman2008_arrhenius(c_e, T):
     """
@@ -70,8 +81,9 @@ def graphite_diffusivity_Chen2020(sto, T):
 
     return D_ref * arrhenius
 
-# update geometry parameters to match Stock et al 2023
 param_battery = pybamm.ParameterValues("Prada2013")
+
+# update geometry parameters to match Stock et al 2023
 param_battery.update({    
     # Electrode properties
     "Negative electrode thickness [m]": 71e-6,
@@ -91,9 +103,9 @@ param_battery.update({
 
     # Cell properties
     "Electrode height [m]": 0.067,  # to give an area of 0.18 m2
-    "Electrode width [m]": 22*4*2, 
-    "Nominal cell capacity [A.h]": 161.5*2,
-    "Current function [A]": 161.5*2,
+    "Electrode width [m]": 22*4, 
+    "Nominal cell capacity [A.h]": 161.5,
+    "Current function [A]": 161.5,
 
     # Operation limits
     "Lower voltage cut-off [V]": 2.5,
@@ -147,62 +159,72 @@ param_battery.update({
 
 # Kinetic parameters
 param_battery.update({
-    "Positive electrode conductivity [S.m-1]": 0.025, # Ombrini 2025
+    "Positive electrode conductivity [S.m-1]": 0.1, # Ombrini 2025
     "Positive electrode exchange-current density [A.m-2]": LFP_ecd,
     
     "Negative particle diffusivity [m2.s-1]": graphite_diffusivity_Chen2020, # from Chen 2020
     "Negative electrode exchange-current density [A.m-2]": graphite_ecd,
-    # "Negative electrode Bruggeman coefficient (electrolyte)": 2.8, # from Dickmanns 2025
-    "Negative electrode Bruggeman coefficient (electrolyte)": 2.0, # from Dickmanns 2025
+    "Negative electrode Bruggeman coefficient (electrolyte)": 2.8, # from Dickmanns 2025
 })
 
-discret_points = {"x_n": 20, 
-           "x_s": 5, 
-           "x_p": 50, 
-           "r_p": 10, 
-           "r_n": 10,
-           "R_p": 5,
-           }
+rate = 1
+initial_state_of_charge = 0.5
+delta_soc = 0.5
+sols = []
+output_variables = [
+    "Negative particle surface concentration",
+    "Positive particle surface concentration",
+    "Voltage [V]",
+    "X-averaged positive electrode hysteresis state",
+    "X-averaged negative electrode hysteresis state",
+]
 
-R_p_typ = param_battery["Positive particle radius [m]"]
-sd_p = 0.3
-R_min_p = np.max([0, 1 - sd_p * 3])
-R_max_p = (1 + sd_p * 3)
+for decay in [1, 5]:
+    param_base = param_battery.copy()
+    param_base.update({
+        "Negative electrode OCP [V]": graphite_ocp_avg,
+        "Negative electrode lithiation OCP [V]": graphite_ocp_lithi,
+        "Negative electrode delithiation OCP [V]": graphite_ocp_delithi,
 
-def f_a_dist_p(R):
-    return lognormal(R, R_p_typ, sd_p * R_p_typ)
+        "Positive electrode OCP [V]": LFP_ocp_avg,
+        "Positive electrode lithiation OCP [V]": LFP_ocp_lithi,
+        "Positive electrode delithiation OCP [V]": LFP_ocp_delithi,
 
-param_battery.update(
-    {
-        "Positive minimum particle radius [m]": R_min_p * R_p_typ,
-        "Positive maximum particle radius [m]": R_max_p * R_p_typ,
-        "Positive area-weighted particle-size distribution [m-1]": f_a_dist_p,
-    })
+        "Negative particle lithiation hysteresis decay rate": decay,
+        "Positive particle lithiation hysteresis decay rate": decay,
+        "Negative particle delithiation hysteresis decay rate": decay,
+        "Positive particle delithiation hysteresis decay rate": decay,
 
-param_base = param_battery.copy()
+        "Initial hysteresis state in negative electrode": 0,
+        "Initial hysteresis state in positive electrode": 0,
+    }, check_already_exists=False)
 
-decay = 10
-param_base.update({
-    "Negative electrode OCP [V]": graphite_ocp_avg,
-    "Negative electrode lithiation OCP [V]": graphite_ocp_lithi,
-    "Negative electrode delithiation OCP [V]": graphite_ocp_delithi,
+    experiment = pybamm.Experiment(
+        [   
+            "Charge at 0.1 C for 600 minutes or until 3.5 V",
+            "Rest for 100 minutes",
+            f"Discharge at {rate} C for {60*delta_soc/rate} minutes",
+            "Rest for 100 minutes",
+        ],
+    )
 
-    "Positive electrode OCP [V]": LFP_ocp_avg,
-    "Positive electrode lithiation OCP [V]": LFP_ocp_lithi,
-    "Positive electrode delithiation OCP [V]": LFP_ocp_delithi,
+    # Set up solver and simulation
+    sim_base = pybamm.Simulation(
+        model=base_model,
+        parameter_values=param_base,
+        # solver=pybamm.CasadiSolver(mode="safe"),
+        solver = pybamm.IDAKLUSolver(),
+        var_pts=discret_points,
+        experiment=experiment,
+    )
 
-    "Negative particle lithiation hysteresis decay rate": decay,
-    "Positive particle lithiation hysteresis decay rate": decay,
-    "Negative particle delithiation hysteresis decay rate": decay,
-    "Positive particle delithiation hysteresis decay rate": decay,
+    current_time = time.time()
+    sol_base = sim_base.solve(initial_soc=initial_state_of_charge)
+    sols.append(sol_base)
+    print("Simulation base:", time.time() - current_time, " sec")
 
-    "Initial hysteresis state in negative electrode": 0,
-    "Initial hysteresis state in positive electrode": 0,
-}, check_already_exists=False)
-
-param_adv = param_battery.copy()
-param_adv.update({
-    "Negative electrode OCP [V]": graphite_ocp_phase_field,
-    "Positive electrode OCP [V]": LFP_ocp_phase_field,
-})
+pybamm.dynamic_plot(
+    sols,
+    output_variables=output_variables,
+)
 

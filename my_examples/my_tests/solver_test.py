@@ -53,7 +53,7 @@ netlist = lp.setup_circuit(
 rate = 1.0
 current = rate *  param_base["Nominal cell capacity [A.h]"] * Nbatt # 1C in A
 initial_soc = 1.0
-final_soc = 0.1
+final_soc = 0.5
 time = 60*(initial_soc - final_soc) / rate  # in minutes
 
 experiment = pybamm.Experiment(
